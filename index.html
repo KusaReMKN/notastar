@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NotA*Recur Test</title>
+    <script src="./notastar.js"></script>
+    <style>
+      * {
+        box-sizing: content-box;
+      }
+      canvas {
+        border: solid;
+        width: 100%;
+        max-width: 800px;
+        max-height: 800px;
+      }
+      .flex {
+        display: flex;
+        justify-content: space-around;
+        flex-wrap: wrap;
+      }
+      output {
+        white-space: pre;
+        flex-grow: 1;
+        line-height: 1rem;
+        padding: 0.5rem;
+        max-height: 800px;
+        overflow-y: scroll;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="vmap">
+      <!-- Never submitted -->
+      <fieldset>
+        <legend>マップを描け</legend>
+        <div class="flex">
+          <label>
+            <input type="radio" name="pen" value="start" />
+            スタート位置
+          </label>
+          <label>
+            <input type="radio" name="pen" value="goal" />
+            ゴール位置
+          </label>
+          <label>
+            <input type="radio" name="pen" value="wall" checked />
+            障害物
+          </label>
+          <label>
+            <input type="radio" name="pen" value="erase" />
+            けしごむ
+          </label>
+          <button id="run">探索開始</button>
+        </div>
+      </fieldset>
+    </form>
+    <hr />
+    <p>
+      <strong>（スマホじゃ動か）ないです</strong>。 めちゃくちゃ時間掛かります。
+    </p>
+    <div class="flex">
+      <canvas id="canvas"></canvas>
+      <output id="output"></output>
+    </div>
+    <script>
+      "use strict";
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      const output = document.getElementById("output");
+      const vmap = document.forms.vmap;
+      vmap.onsubmit = () => false;
+      vmap.addEventListener("submit", () => {
+        vmap.run.disabled = true;
+        vmap.run.textContent = "探索中...";
+        setTimeout(async () => {
+          let now = start,
+            prev;
+          let loop = 0;
+          let failed = false;
+          let trip = 0;
+          ctx.lineWidth = 5;
+          ctx.lineCap = ctx.lineJoin = "round";
+          ctx.strokeStyle = "#0FF";
+          ctx.fillStyle = "orange";
+          ctx.beginPath();
+          ctx.moveTo(start.lat * 10 + 5, start.lng * 10 + 5);
+          const begin = performance.now();
+          do {
+            prev = now;
+            now = await new Promise((r) =>
+              setTimeout(() => {
+                r(notAstar(now, goal));
+              })
+            );
+            if (Number.isNaN(now.lat)) {
+              failed = true;
+              break;
+            }
+            trip += euclidean(prev, now);
+            ctx.lineTo(now.lat * 10 + 5, now.lng * 10 + 5);
+            ctx.stroke();
+            ctx.fillRect(now.lat * 10 - 5, now.lng * 10 - 5, 20, 20);
+          } while (
+            loop++ < 100 &&
+            JSON.stringify(now) !== JSON.stringify(goal)
+          );
+          const finish = performance.now();
+          console.log(loop);
+          if (loop >= 100 || failed) {
+            ctx.fillStyle = "red";
+            ctx.fillRect(prev.lat * 10 - 5, prev.lng * 10 - 5, 20, 20);
+            output.innerHTML += '<span style="color: red">Unreached!</span>\n';
+          } else {
+            output.innerHTML += '<span style="color: green">Reached!</span>\n';
+          }
+          const dur = finish - begin;
+          output.innerHTML += `\tTime:\t${dur} ms\n`;
+          output.innerHTML += `\tSteps:\t${loop}\n`;
+          output.innerHTML += `\tTrip:\t${trip}\n`;
+          output.scrollBy(0, Number.MAX_SAFE_INTEGER);
+          vmap.run.textContent = "探索開始";
+          vmap.run.disabled = false;
+        });
+      });
+      [canvas.width, canvas.height] = [1000, 1000];
+
+      map.length = 0;
+      for (let i = 0; i < 100; i++) {
+        const tmp = [];
+        for (let j = 0; j < 100; j++) tmp.push(false);
+        map.push(tmp);
+      }
+      const start = { lat: 0, lng: 0 };
+      const goal = { lat: 99, lng: 99 };
+
+      function render() {
+        output.innerHTML = "";
+        ctx.clearRect(0, 0, 1000, 1000);
+        ctx.fillStyle = "black";
+        for (const i in map)
+          for (const j in map[i])
+            if (map[i][j]) ctx.fillRect(j * 10, i * 10, 10, 10);
+        ctx.fillStyle = "#00F";
+        ctx.fillRect(start.lat * 10 - 5, start.lng * 10 - 5, 20, 20);
+        ctx.fillStyle = "#0F0";
+        ctx.fillRect(goal.lat * 10 - 5, goal.lng * 10 - 5, 20, 20);
+      }
+
+      let pressed = false;
+      function mouseHandler(e) {
+        switch (e.type) {
+          case "mousedown":
+            pressed = true;
+            break;
+          case "mouseup":
+          case "mouseleave":
+            pressed = false;
+            break;
+          default:
+            void 0;
+        }
+        const clickpos = [
+          (e.offsetX * 100) / e.target.clientWidth - 0.5,
+          (e.offsetY * 100) / e.target.clientHeight - 0.5,
+        ];
+        const x = clickpos[0] | 0;
+        const y = clickpos[1] | 0;
+        const draw = (x, y, q) => {
+          for (let i = -1; i <= 1; i++)
+            for (let j = -1; j <= 1; j++) {
+              const a = x + j;
+              const b = y + i;
+              if (a < 0 || 100 <= a || b < 0 || 100 <= b) continue;
+              map[b][a] = q;
+            }
+        };
+        if (!pressed) return;
+        switch (vmap.pen.value) {
+          case "start":
+            (start.lat = clickpos[0]), (start.lng = clickpos[1]);
+            break;
+          case "goal":
+            (goal.lat = clickpos[0]), (goal.lng = clickpos[1]);
+            break;
+          case "wall":
+            draw(x, y, true);
+            break;
+          case "erase":
+            draw(x, y, false);
+        }
+        render();
+      }
+      canvas.addEventListener("mousedown", mouseHandler);
+      canvas.addEventListener("mouseup", mouseHandler);
+      canvas.addEventListener("mousemove", mouseHandler);
+      canvas.addEventListener("mouseleave", mouseHandler);
+
+      render();
+    </script>
+  </body>
+</html>
